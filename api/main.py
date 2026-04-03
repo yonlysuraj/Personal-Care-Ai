@@ -1,9 +1,9 @@
 """
 FastAPI app entry point.
 
-IMPORTANT for Vercel:
+IMPORTANT for serverless deployment:
   - The handler variable at the bottom wraps the app with Mangum.
-  - Mangum translates AWS Lambda / Vercel serverless requests into ASGI.
+	- Mangum translates serverless requests into ASGI.
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

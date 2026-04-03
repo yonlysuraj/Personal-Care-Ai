@@ -83,7 +83,7 @@ def _category_match_mask(category_series: pd.Series, category_name: str) -> pd.S
 	if category_name == "perfume":
 		return category_series.str.contains("perfume|fragrance", regex=True, na=False)
 	if category_name == "nail polish":
-		return category_series.str.contains("nail\s*polish", regex=True, na=False)
+		return category_series.str.contains(r"nail\s*polish", regex=True, na=False)
 	if category_name == "massage oils":
 		return category_series.str.contains("massage|body oil", regex=True, na=False)
 	if category_name == "body lotion":
@@ -95,7 +95,7 @@ def _category_match_mask(category_series: pd.Series, category_name: str) -> pd.S
 def load_products(csv_path: str = "data/products.csv") -> pd.DataFrame:
 	"""
 	lru_cache means the CSV is read ONCE per process.
-	On Vercel, each cold start re-reads it - acceptable for a small CSV.
+	On each cold start, it is re-read once per process - acceptable for a small CSV.
 	"""
 	path = Path(csv_path)
 	if not path.exists():

@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
 	# Databases
 	local_database_url: str = ""
-	neon_database_url: str = ""
+	production_database_url: str = ""
 	environment: str = "development"
 
 	# App
@@ -25,13 +25,13 @@ class Settings(BaseSettings):
 	def database_url(self) -> str:
 		"""
 		Returns the correct DB URL based on environment.
-		In production (Vercel), ENVIRONMENT is set to "production"
-		via Vercel's environment variable dashboard.
+		In production, ENVIRONMENT is set to "production"
+		via your deployment environment variables.
 		"""
 		if self.environment == "production":
-			if not self.neon_database_url:
-				raise ValueError("NEON_DATABASE_URL must be set in production")
-			return self.neon_database_url
+			if not self.production_database_url:
+				raise ValueError("PRODUCTION_DATABASE_URL must be set in production")
+			return self.production_database_url
 		return self.local_database_url
 
 	@property

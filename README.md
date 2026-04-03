@@ -88,7 +88,7 @@ Create `.env` in project root:
 ```env
 GROQ_API_KEY=your_groq_key
 LOCAL_DATABASE_URL=postgresql://postgres:password@localhost:5432/personal_care_db
-NEON_DATABASE_URL=postgresql://user:pass@host/db?sslmode=require
+PRODUCTION_DATABASE_URL=postgresql://user:pass@host/db?sslmode=require
 ENVIRONMENT=development
 SUPPORT_PHONE=+91-1800-266-1234
 ALLOWED_ORIGINS=http://localhost:8501,http://localhost:3000
@@ -198,6 +198,6 @@ These logs include chat requests, scrape/reload events, and error traces.
 
 ## Notes
 
-- Scraper is local-only (not for Vercel runtime)
-- Streamlit should be hosted separately from Vercel API in production
-- Neon serverless DB may have cold start delays
+- Scraper is local-only (not for serverless runtime)
+- Streamlit should be hosted separately from the API backend in production
+- Serverless databases may have cold start delays

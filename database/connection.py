@@ -1,7 +1,7 @@
 """
 SQLAlchemy engine setup.
 - Local: standard connection pool (5 connections)
-- Neon: NullPool (CRITICAL for serverless - explained below)
+- Production serverless: NullPool (critical for short-lived workers)
 """
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
@@ -13,12 +13,11 @@ settings = get_settings()
 
 def get_engine():
 	"""
-	Neon (serverless) REQUIRES NullPool.
+	Serverless deployments require NullPool.
 
-	Why: Vercel functions spin up and die with each request. A persistent
-	connection pool keeps connections open between requests - but Vercel kills
-	the process, leaving those connections dangling on Neon's side. Neon then
-	refuses new connections ("too many clients"). NullPool opens a fresh
+	Why: short-lived workers spin up and die with each request. A persistent
+	connection pool keeps connections open between requests, and process shutdowns
+	can leave dangling connections. NullPool opens a fresh
 	connection per request and closes it immediately. Slightly slower but reliable.
 
 	Local PostgreSQL uses the default pool - faster for development.

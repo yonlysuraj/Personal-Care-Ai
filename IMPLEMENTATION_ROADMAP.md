@@ -1,19 +1,20 @@
-# 🚀 Personal Care AI Chatbot — Implementation Roadmap
-> **Stack:** Groq (Llama 3.3) · FastAPI · Streamlit · PostgreSQL (local dev) · Neon (cloud prod) · Vercel  
-> **Goal:** Build → Test locally → Deploy to Vercel with Neon as the cloud database  
-> **Format:** Ordered TODO checklist. Each task tells you *what*, *how*, and *why*.
+# 💄 Personal Care AI Chatbot — Local Build Roadmap
+> **Stack:** Groq (Llama 3.3) · FastAPI · Streamlit · Docker PostgreSQL  
+> **Goal:** Build and run everything locally on your laptop  
+> **Format:** Ordered TODO checklist — each task explains *what*, *how*, and *why*.
 
 ---
 
-## ⚠️ Critical Warnings (Read Before Starting)
+## ⚠️ Before You Start
 
-> **Vercel + FastAPI:** Vercel is built for serverless Node.js. Running FastAPI on it requires a special adapter (`mangum`). Without it, your API will **not work**. This is covered in Phase 6.
+> **Docker is required for PostgreSQL.** No manual PostgreSQL installation needed — Docker handles it with one command.
 
-> **Vercel + Streamlit:** Streamlit **cannot be deployed on Vercel** — it's a long-running Python process. You have two options: (a) host Streamlit on **Streamlit Community Cloud** (free), or (b) convert the UI to a simple HTML/JS frontend. This roadmap uses option (a).
+> **Three terminals needed to run the full stack:**
+> - Terminal 1 → `docker compose up -d` (database)
+> - Terminal 2 → `uvicorn api.main:app --reload` (FastAPI backend)
+> - Terminal 3 → `streamlit run ui/streamlit_app.py` (UI)
 
-> **Myntra Scraper + Vercel:** Selenium/Chrome **cannot run on Vercel** (no browser). The scraper runs **locally only** — it generates `products.csv`, which gets committed and used as a static knowledge base. This is by design.
 
-> **Neon free tier:** Neon's free tier **pauses the database after 5 minutes of inactivity**. The first query after a pause takes ~2–3 seconds (cold start). Handle this with a retry or connection check.
 
 ---
 
@@ -50,7 +51,7 @@ personal-care-ai/
 ├── .env.example                  ← safe template to commit
 ├── .gitignore
 ├── requirements.txt
-├── vercel.json                   ← Vercel deployment config
+├── docker-compose.yml            ← spins up local PostgreSQL via Docker
 ├── README.md
 │
 ├── config/
@@ -115,13 +116,12 @@ venv/
 __pycache__/
 *.pyc
 
-# Data (optional — commit products.csv but ignore large files)
-# data/*.csv   ← comment this OUT so products.csv gets committed
+# Docker local volume (your DB data — no need to commit this)
+postgres_data/
 
-# Vercel
-.vercel/
+# products.csv IS committed — leave the line below commented out
+# data/*.csv
 ```
-> **Why:** The `.env` file contains your API keys and database passwords. If you accidentally push it to GitHub, **rotate every key immediately**.
 
 ---
 
@@ -133,18 +133,17 @@ groq>=0.9.0
 # API
 fastapi>=0.111.0
 uvicorn[standard]>=0.30.0
-mangum>=0.17.0          # CRITICAL: makes FastAPI work on Vercel (AWS Lambda adapter)
 
 # Database
 sqlalchemy>=2.0.30
-psycopg2-binary>=2.9.9  # PostgreSQL driver
+psycopg2-binary>=2.9.9
 
 # Config
 python-dotenv>=1.0.1
 pydantic>=2.7.0
 pydantic-settings>=2.3.0
 
-# Scraper (run locally only, not on Vercel)
+# Scraper
 selenium>=4.18.0
 webdriver-manager>=4.0.1
 beautifulsoup4>=4.12.3
@@ -152,12 +151,11 @@ pandas>=2.2.0
 
 # UI
 streamlit>=1.35.0
-httpx>=0.27.0           # Streamlit → FastAPI calls
+httpx>=0.27.0
 
 # Utilities
 python-dateutil>=2.9.0
 ```
-> **Why:** `mangum` is the bridge between Vercel's serverless runtime and your ASGI FastAPI app. Without it, Vercel cannot call your FastAPI functions at all.
 
 ```bash
 pip install -r requirements.txt
@@ -167,77 +165,49 @@ pip install -r requirements.txt
 
 ## 🔐 Phase 1 — Configuration & Environment Variables
 
-### 1.1 — Create `.env` (local development)
+### 1.1 — Create `.env`
 ```env
 # LLM
 GROQ_API_KEY=gsk_your_key_here
 
-# Database — LOCAL (used when ENV=development)
-LOCAL_DATABASE_URL=postgresql://postgres:yourpassword@localhost:5432/personal_care_db
-
-# Database — NEON (used when ENV=production OR on Vercel)
-NEON_DATABASE_URL=postgresql://user:pass@ep-xyz.us-east-2.aws.neon.tech/neondb?sslmode=require
+# Database — matches docker-compose.yml exactly
+DATABASE_URL=postgresql://chatbot_user:chatbot_pass@localhost:5432/personal_care_db
 
 # App
-ENVIRONMENT=development           # "development" or "production"
 SUPPORT_PHONE=+91-1800-266-1234
 
-# CORS (comma-separated list of allowed origins)
-ALLOWED_ORIGINS=http://localhost:8501,http://localhost:3000
+# CORS — allow Streamlit to call FastAPI
+ALLOWED_ORIGINS=http://localhost:8501
 ```
-> **Why:** Two database URLs allow you to work locally without touching production data, and switch to Neon automatically when deployed.
+> **The credentials in `DATABASE_URL` must exactly match `docker-compose.yml`.** If they differ by even one character you'll get `password authentication failed`.
 
 ---
 
-### 1.2 — Create `.env.example` (commit this to git)
+### 1.2 — Create `.env.example` (commit this to git, `.env` never gets committed)
 ```env
 GROQ_API_KEY=your_groq_api_key_here
-LOCAL_DATABASE_URL=postgresql://postgres:password@localhost:5432/personal_care_db
-NEON_DATABASE_URL=postgresql://user:pass@ep-xyz.region.aws.neon.tech/neondb?sslmode=require
-ENVIRONMENT=development
+DATABASE_URL=postgresql://chatbot_user:chatbot_pass@localhost:5432/personal_care_db
 SUPPORT_PHONE=+91-1800-266-1234
 ALLOWED_ORIGINS=http://localhost:8501
 ```
-> **Why:** `.env.example` documents what variables exist without exposing real values. Anyone cloning the repo knows exactly what to fill in.
 
 ---
 
 ### 1.3 — Create `config/settings.py`
 ```python
 """
-Centralized configuration using pydantic-settings.
-Automatically reads from .env file.
-Selects the correct database URL based on ENVIRONMENT variable.
+Centralized config — reads from .env automatically via pydantic-settings.
+Import get_settings() anywhere instead of scattering os.getenv() calls.
 """
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    # LLM
     groq_api_key: str
-
-    # Databases
-    local_database_url: str = ""
-    neon_database_url: str = ""
-    environment: str = "development"
-
-    # App
+    database_url: str
     support_phone: str = "+91-1800-266-1234"
     allowed_origins: str = "http://localhost:8501"
-
-    @property
-    def database_url(self) -> str:
-        """
-        Returns the correct DB URL based on environment.
-        In production (Vercel), ENVIRONMENT is set to "production"
-        via Vercel's environment variable dashboard.
-        """
-        if self.environment == "production":
-            if not self.neon_database_url:
-                raise ValueError("NEON_DATABASE_URL must be set in production")
-            return self.neon_database_url
-        return self.local_database_url
 
     @property
     def origins_list(self) -> list[str]:
@@ -250,10 +220,7 @@ class Settings(BaseSettings):
 
 @lru_cache()
 def get_settings() -> Settings:
-    """
-    Cached settings instance.
-    lru_cache means .env is only read once per process — efficient.
-    """
+    """lru_cache = .env is read once per process, not on every request."""
     return Settings()
 ```
 > **Why:** `pydantic-settings` validates that required env vars exist at startup. If `GROQ_API_KEY` is missing, the app crashes immediately with a clear error — much better than a mysterious `KeyError` buried in code.
@@ -264,46 +231,80 @@ def get_settings() -> Settings:
 
 ## 🗄️ Phase 2 — Database Layer
 
-### 2.1 — Set up local PostgreSQL
+### 2.1 — Install Docker Desktop (if not already installed)
+1. Download from [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/)
+2. Install and start Docker Desktop
+3. Verify it works:
 ```bash
-# Option A: If PostgreSQL is already installed
-psql -U postgres
-CREATE DATABASE personal_care_db;
-\q
-
-# Option B: Using Docker (zero install)
-docker run --name pg-local \
-  -e POSTGRES_DB=personal_care_db \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=yourpassword \
-  -p 5432:5432 \
-  -d postgres:15
+docker --version
+# Should print: Docker version 25.x.x
 ```
-> **Why:** Local PostgreSQL = zero latency, no cold starts, free, works offline. Use it for all development. Only switch to Neon for the deployed version.
+> **Why Docker instead of installing PostgreSQL directly?** Installing PostgreSQL manually means dealing with PATH variables, Windows service setup, version conflicts, and password resets. Docker gives you a disposable, clean PostgreSQL that starts with one command and can be wiped and recreated in seconds. Zero installation pain.
 
 ---
 
-### 2.2 — Set up Neon (cloud PostgreSQL)
-1. Go to [neon.tech](https://neon.tech) → Sign up (free)
-2. Create project: `personal-care-ai`
-3. Copy the connection string that looks like:
-   ```
-   postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech/neondb?sslmode=require
-   ```
-4. Paste it into your `.env` as `NEON_DATABASE_URL`
+### 2.2 — Create `docker-compose.yml` (local PostgreSQL)
+```yaml
+version: "3.9"
 
-> **Why:** Neon provides a serverless PostgreSQL with a free tier. The `?sslmode=require` at the end of the URL is mandatory — Neon rejects non-SSL connections.
+# Spins up a local PostgreSQL for development.
+#
+# Commands:
+#   Start:   docker compose up -d
+#   Stop:    docker compose down
+#   Wipe DB: docker compose down -v   (deletes all data — use with caution)
+#   Logs:    docker compose logs -f postgres
 
-> **Mistake to avoid:** Do NOT use the same database for development and production. Schema migrations on a production DB while users are active breaks things. Use local for dev, Neon for prod — always.
+services:
+  postgres:
+    image: postgres:15-alpine        # lightweight Alpine-based image
+    container_name: personal_care_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       personal_care_db
+      POSTGRES_USER:     chatbot_user
+      POSTGRES_PASSWORD: chatbot_pass
+    ports:
+      - "5432:5432"                  # maps container port → your laptop port
+    volumes:
+      - postgres_data:/var/lib/postgresql/data   # persists data between restarts
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatbot_user -d personal_care_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres_data:                     # named volume — Docker manages this folder
+```
+
+> **Credentials used here (`chatbot_user` / `chatbot_pass`) must exactly match `LOCAL_DATABASE_URL` in your `.env`.** If they don't match, you'll get "password authentication failed" errors.
 
 ---
 
-### 2.3 — Create `database/connection.py`
+### 2.3 — Start the Docker PostgreSQL container
+```bash
+# Start PostgreSQL in the background
+docker compose up -d
+
+# Verify it's running (should show "healthy" after ~10 seconds)
+docker compose ps
+
+# Check logs if something looks wrong
+docker compose logs postgres
+
+# Connect directly to verify (optional)
+docker exec -it personal_care_db psql -U chatbot_user -d personal_care_db
+```
+
+> **Common issue:** Port 5432 already in use. This means you have a local PostgreSQL installation running. Either stop it (`net stop postgresql` on Windows, `brew services stop postgresql` on Mac) or change the port in `docker-compose.yml` to `"5433:5432"` and update `LOCAL_DATABASE_URL` to use `localhost:5433`.
+
+---
+
+### 2.5 — Create `database/connection.py`
 ```python
 """
-SQLAlchemy engine setup.
-- Local: standard connection pool (5 connections)
-- Neon: NullPool (CRITICAL for serverless — explained below)
+SQLAlchemy engine — connects to Docker PostgreSQL via DATABASE_URL in .env
 """
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
@@ -311,36 +312,13 @@ from config.settings import get_settings
 
 settings = get_settings()
 
+engine = create_engine(
+    settings.database_url,
+    pool_size=5,
+    max_overflow=10,
+    pool_pre_ping=True,   # tests connection before using it — avoids stale connection errors
+)
 
-def get_engine():
-    """
-    Neon (serverless) REQUIRES NullPool.
-    
-    Why: Vercel functions spin up and die with each request. A persistent
-    connection pool keeps connections open between requests — but Vercel kills
-    the process, leaving those connections dangling on Neon's side. Neon then
-    refuses new connections ("too many clients"). NullPool opens a fresh
-    connection per request and closes it immediately. Slightly slower but reliable.
-    
-    Local PostgreSQL uses the default pool — faster for development.
-    """
-    if settings.environment == "production":
-        from sqlalchemy.pool import NullPool
-        return create_engine(
-            settings.database_url,
-            poolclass=NullPool,
-            connect_args={"sslmode": "require"},
-        )
-    else:
-        return create_engine(
-            settings.database_url,
-            pool_size=5,
-            max_overflow=10,
-            pool_pre_ping=True,   # checks connection health before using it
-        )
-
-
-engine = get_engine()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -349,7 +327,7 @@ class Base(DeclarativeBase):
 
 
 def get_db():
-    """FastAPI dependency — yields a DB session, closes it after the request."""
+    """FastAPI dependency — yields a DB session and closes it after the request."""
     db = SessionLocal()
     try:
         yield db
@@ -357,8 +335,8 @@ def get_db():
         db.close()
 
 
-def check_connection():
-    """Health check — returns True if DB is reachable."""
+def check_connection() -> bool:
+    """Health check — returns True if Docker PostgreSQL is reachable."""
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
@@ -367,11 +345,11 @@ def check_connection():
         print(f"DB connection failed: {e}")
         return False
 ```
-> **The most important line here:** `NullPool` for production. Forgetting this is the #1 cause of Neon connection errors on Vercel.
+> **`pool_pre_ping=True`** — before handing a connection to your code, SQLAlchemy sends a quick `SELECT 1` to verify it's alive. Prevents rare "connection closed" errors after Docker restarts.
 
 ---
 
-### 2.4 — Create `database/models.py`
+### 2.6 — Create `database/models.py`
 ```python
 """
 SQLAlchemy ORM models.
@@ -450,6 +428,9 @@ if __name__ == "__main__":
 ```
 
 ```bash
+# Make sure Docker container is running first!
+docker compose up -d
+
 python -m database.connection
 ```
 > **Why:** `create_all()` is idempotent — it creates tables that don't exist and skips those that do. Safe to run multiple times.
@@ -458,7 +439,7 @@ python -m database.connection
 
 ---
 
-### 2.6 — Create `database/seed.py`
+### 2.8 — Create `database/seed.py`
 ```python
 """
 Inserts sample conversations into the DB to demonstrate the full workflow.
@@ -528,8 +509,8 @@ python -m database.seed
 
 ## 🕷️ Phase 3 — Myntra Scraper (Runs Locally Only)
 
-### 3.1 — Understand the scraper constraints
-> **Key decision:** The scraper **runs on your laptop**, generates `data/products.csv`, and you **commit that CSV to git**. Vercel reads the CSV at runtime as a static file. Selenium/Chrome cannot run in Vercel's serverless environment — no exceptions.
+### 3.1 — Understand the scraper's role
+> The scraper runs on your laptop, generates `data/products.csv`, and the chatbot reads that CSV as its product knowledge base. Selenium needs Chrome installed locally — it's a local-only tool.
 
 ---
 
@@ -804,10 +785,7 @@ from functools import lru_cache
 
 @lru_cache(maxsize=1)
 def load_products(csv_path: str = "data/products.csv") -> pd.DataFrame:
-    """
-    lru_cache means the CSV is read ONCE per process.
-    On Vercel, each cold start re-reads it — acceptable for a small CSV.
-    """
+    """lru_cache means the CSV is read ONCE per process — restart uvicorn to pick up changes."""
     path = Path(csv_path)
     if not path.exists():
         return pd.DataFrame()
@@ -1084,16 +1062,10 @@ async def health_check():
 ```python
 """
 FastAPI app entry point.
-
-IMPORTANT for Vercel:
-  - The `handler` variable at the bottom wraps the app with Mangum.
-  - Mangum translates AWS Lambda / Vercel's serverless requests into
-    ASGI requests that FastAPI understands.
-  - vercel.json points to this file and the `handler` variable.
+Run with: uvicorn api.main:app --reload
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from mangum import Mangum
 from config.settings import get_settings
 from database.connection import engine
 from database.models import Base
@@ -1108,7 +1080,7 @@ app = FastAPI(
     redoc_url=None,
 )
 
-# CORS — allow Streamlit and browser to call this API
+# CORS — allows Streamlit (localhost:8501) to call this API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.origins_list,
@@ -1117,20 +1089,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
 app.include_router(chat.router)
 app.include_router(products.router)
 
 
 @app.on_event("startup")
 async def startup():
-    """Create DB tables on startup if they don't exist."""
+    """Create tables on startup if they don't already exist."""
     Base.metadata.create_all(bind=engine)
     print("✅ Database tables ready.")
-
-
-# Vercel serverless handler — MUST be named `handler`
-handler = Mangum(app, lifespan="off")
 ```
 
 ---
@@ -1142,11 +1109,8 @@ handler = Mangum(app, lifespan="off")
 """
 Streamlit Chat UI
 -----------------
-Calls the FastAPI backend via HTTP.
-Session ID is stored in st.session_state so each browser tab = one conversation.
-
-Deploy this on Streamlit Community Cloud (NOT Vercel).
-Set FASTAPI_BASE_URL in Streamlit's secrets manager.
+Calls the FastAPI backend running on localhost:8000.
+Each browser tab gets its own session_id → one conversation per tab.
 """
 import uuid
 import streamlit as st
@@ -1244,103 +1208,7 @@ with st.sidebar:
 
 ---
 
-## ☁️ Phase 7 — Deployment on Vercel
-
-### 7.1 — Understand the Vercel architecture
-```
-Vercel deploys FastAPI as serverless functions.
-Each API route = one Lambda function.
-Streamlit runs separately on Streamlit Community Cloud.
-
-User browser
-    │
-    ├─── HTTPS ──▶ Streamlit Cloud (ui/streamlit_app.py)
-    │                   │
-    │                   └─── HTTPS ──▶ Vercel (api/main.py via Mangum)
-    │                                       │
-    │                                       └─── TCP ──▶ Neon PostgreSQL
-    │                                       └─── HTTPS ──▶ Groq API
-    │
-    └─── HTTPS ──▶ Vercel (direct API calls, /api/docs, /health)
-```
-
----
-
-### 7.2 — Create `vercel.json`
-```json
-{
-  "version": 2,
-  "builds": [
-    {
-      "src": "api/main.py",
-      "use": "@vercel/python",
-      "config": {
-        "maxLambdaSize": "50mb"
-      }
-    }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "api/main.py"
-    }
-  ],
-  "env": {
-    "ENVIRONMENT": "production"
-  }
-}
-```
-> **Why:** This tells Vercel: "all incoming requests go to `api/main.py`. That file exports a `handler` (Mangum) which routes them into FastAPI."
-
----
-
-### 7.3 — Deploy to Vercel
-```bash
-# 1. Install Vercel CLI
-npm install -g vercel
-
-# 2. Login
-vercel login
-
-# 3. Deploy (run from project root)
-vercel
-
-# For production deployment:
-vercel --prod
-```
-
----
-
-### 7.4 — Set environment variables on Vercel
-
-```bash
-# Do this for EVERY variable in your .env
-vercel env add GROQ_API_KEY        production
-vercel env add NEON_DATABASE_URL   production
-vercel env add ENVIRONMENT         production   # value: "production"
-vercel env add SUPPORT_PHONE       production
-vercel env add ALLOWED_ORIGINS     production   # your Streamlit Cloud URL
-```
-
-OR go to: `vercel.com → your project → Settings → Environment Variables`
-
-> **Mistake to avoid:** Do NOT set `LOCAL_DATABASE_URL` on Vercel. The `settings.py` code checks `ENVIRONMENT == "production"` and uses `NEON_DATABASE_URL`. If `LOCAL_DATABASE_URL` is missing on Vercel, it just uses an empty string default — which is fine.
-
----
-
-### 7.5 — Deploy Streamlit on Streamlit Community Cloud
-1. Push your code to GitHub
-2. Go to [share.streamlit.io](https://share.streamlit.io)
-3. Click "New app" → connect GitHub repo
-4. Set main file path: `ui/streamlit_app.py`
-5. In **Advanced Settings → Secrets**, add:
-   ```toml
-   FASTAPI_BASE_URL = "https://your-app.vercel.app"
-   ```
-
----
-
-## ✅ Phase 8 — Testing Checklist
+## ✅ Phase 7 — Testing Checklist
 
 ### Local testing
 ```bash
@@ -1368,18 +1236,23 @@ curl http://localhost:8000/api/products/stats
 - [ ] **DB persistence:** Two messages appear in PostgreSQL `messages` table
 - [ ] **New conversation:** Each new `session_id` creates a new `Conversation` row
 
-### Verify database
+### Verify database (Docker)
 ```bash
-# Connect to local PostgreSQL
-psql -U postgres -d personal_care_db
+# Connect to your running Docker PostgreSQL container
+docker exec -it personal_care_db psql -U chatbot_user -d personal_care_db
 
-# Check tables
+# Check tables exist
 \dt
 
-# Check conversations
+# Check conversations were seeded
 SELECT * FROM conversations;
 SELECT role, content, is_handoff FROM messages LIMIT 10;
+
+# Exit
+\q
 ```
+
+> **Shortcut:** You can also use **pgAdmin** (a GUI tool) to connect to `localhost:5432` with the Docker credentials and browse tables visually.
 
 ---
 
@@ -1387,69 +1260,80 @@ SELECT role, content, is_handoff FROM messages LIMIT 10;
 
 | Mistake | Symptom | Fix |
 |---------|---------|-----|
-| Forgot `mangum` | Vercel returns 500 on all routes | Add `mangum` to `requirements.txt`, add `handler = Mangum(app)` in `main.py` |
-| Used regular pool on Neon | "too many clients" error | Use `NullPool` when `ENVIRONMENT == production` |
-| Committed `.env` to git | API keys exposed | Rotate all keys immediately. Add `.env` to `.gitignore` |
-| Missing `?sslmode=require` in Neon URL | SSL connection error | Copy the full Neon URL including `?sslmode=require` |
-| CORS not set | Streamlit can't call FastAPI | Add your Streamlit URL to `ALLOWED_ORIGINS` env var |
-| Scraper running on Vercel | Build fails (no Chrome) | Move all selenium imports inside `if __name__ == "__main__":` or keep scraper as a standalone local script |
-| `lru_cache` on `load_products` | Products not updating after re-scrape | Clear cache: `load_products.cache_clear()` or restart the server |
-| Missing `__init__.py` | `ModuleNotFoundError` | Add empty `__init__.py` to every package folder |
-| Neon cold start timeout | First request fails | Add `pool_pre_ping=True` and handle the first request's ~3s delay in the UI |
+| Docker not running when starting FastAPI | `could not connect to server` | Run `docker compose up -d` first, then uvicorn |
+| Port 5432 already in use | Docker fails to start | Stop local PostgreSQL: `net stop postgresql` (Windows) or `brew services stop postgresql` (Mac). Or change Docker port to `"5433:5432"` and update `DATABASE_URL` |
+| `.env` credentials don't match `docker-compose.yml` | `password authentication failed` | Make sure `chatbot_user`, `chatbot_pass`, `personal_care_db` are identical in both files |
+| Committed `.env` to git | API keys visible on GitHub | Rotate your Groq key immediately at console.groq.com. Add `.env` to `.gitignore` |
+| Missing `__init__.py` in a folder | `ModuleNotFoundError` | Add an empty `__init__.py` to every package folder |
+| `lru_cache` on `load_products` — products don't update | Old products shown after re-scraping | Restart uvicorn after updating `products.csv` |
+| Selenium scraper fails | "ChromeDriver not found" or bot block | Make sure Chrome is installed. If Myntra blocks it, use the sample CSV instead |
 
 ---
 
-## 📋 Final Deployment Checklist
+## 📋 Final Checklist — Everything Working Locally
 
 ```
 Setup
- [ ] Virtual environment activated
- [ ] All packages installed from requirements.txt
- [ ] .env file created from .env.example
- [ ] .env is in .gitignore
+ [ ] Virtual environment created and activated
+ [ ] pip install -r requirements.txt completed with no errors
+ [ ] .env created from .env.example with real GROQ_API_KEY
+
+Docker PostgreSQL
+ [ ] Docker Desktop installed and open
+ [ ] docker compose up -d runs successfully
+ [ ] docker compose ps shows status "healthy"
 
 Database
- [ ] Local PostgreSQL running
- [ ] Neon project created, connection string saved
- [ ] python -m database.connection runs without error
- [ ] python -m database.seed creates sample rows
- [ ] Verified in psql: SELECT * FROM messages;
+ [ ] python -m database.connection creates tables without error
+ [ ] python -m database.seed inserts 3 sample conversations
+ [ ] docker exec -it personal_care_db psql -U chatbot_user -d personal_care_db -c "SELECT * FROM messages;"
+     shows seeded rows
 
 Scraper
- [ ] python -m scraper.myntra_scraper runs (or sample CSV exists)
- [ ] data/products.csv has 50+ rows and correct columns
- [ ] products.csv committed to git
+ [ ] python -m scraper.myntra_scraper generates data/products.csv
+ [ ] CSV has brand, product_name, discounted_price, rating, product_url, breadcrumbs columns
 
-Chatbot
- [ ] Groq API key works: python -c "from chatbot.groq_client import get_groq_client; print(get_groq_client())"
- [ ] Handoff triggers on "return", "offer", "complaint"
+FastAPI
+ [ ] uvicorn api.main:app --reload starts on port 8000
+ [ ] http://localhost:8000/health → {"status": "ok", "db_connected": true}
+ [ ] http://localhost:8000/api/docs → Swagger UI loads
+ [ ] POST /api/chat with {"message": "show red lipsticks", "session_id": "test"} → returns reply
 
-API
- [ ] uvicorn api.main:app --reload starts without errors
- [ ] /health returns {"status": "ok", "db_connected": true}
- [ ] POST /api/chat returns a response
- [ ] /api/docs shows the Swagger UI
+Streamlit
+ [ ] streamlit run ui/streamlit_app.py opens in browser
+ [ ] Can send a message and receive a response
+ [ ] Handoff banner shows for "I want to return my order"
+ [ ] New Conversation button resets the chat
+ [ ] Sidebar shows product count and stats
 
-UI
- [ ] streamlit run ui/streamlit_app.py starts
- [ ] Full conversation works end-to-end
- [ ] Handoff banner appears for escalation messages
-
-Vercel Deployment
- [ ] vercel.json exists at project root
- [ ] mangum is in requirements.txt
- [ ] handler = Mangum(app) is in api/main.py
- [ ] vercel env add done for all 5 variables
- [ ] vercel --prod succeeds
- [ ] https://your-app.vercel.app/health returns 200
-
-Streamlit Cloud
- [ ] Repo pushed to GitHub
- [ ] Streamlit Cloud app deployed
- [ ] FASTAPI_BASE_URL secret set to Vercel URL
- [ ] End-to-end test from live Streamlit URL works
+End-to-End
+ [ ] Ask about a product → bot uses CSV data in response
+ [ ] Ask about grooming benefits → bot gives general advice
+ [ ] Say "I want a refund" → bot shows contact number, does NOT try to process it
+ [ ] Check DB: docker exec -it personal_care_db psql -U chatbot_user -d personal_care_db
+              -c "SELECT role, content FROM messages ORDER BY id DESC LIMIT 6;"
+     confirms messages are being saved
 ```
 
 ---
 
-*Built for the Naukri AI Engineer assignment. Total estimated time: 2 days (12–14 hours).*
+## 🔄 Daily Workflow
+
+```bash
+# Start everything (run these once per session)
+docker compose up -d                        # start PostgreSQL
+uvicorn api.main:app --reload               # Terminal 1 — FastAPI
+streamlit run ui/streamlit_app.py           # Terminal 2 — UI
+
+# Stop for the day (data is preserved)
+docker compose down
+
+# Nuclear reset — wipe DB and start fresh
+docker compose down -v
+docker compose up -d
+python -m database.seed
+```
+
+---
+
+*Personal Care AI Chatbot — local build. Groq + FastAPI + Streamlit + Docker PostgreSQL.*

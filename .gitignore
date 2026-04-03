@@ -32,3 +32,8 @@ Thumbs.db
 
 # App logs
 logs/*.log
+
+# Implementation documents
+implementation_plan.md
+IMPLEMENTATION_ROADMAP.md
+

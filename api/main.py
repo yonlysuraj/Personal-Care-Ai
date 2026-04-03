@@ -10,12 +10,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 
 from api.routes import chat, products
-from config.logging_setup import get_logger
+from config.logging_setup import get_logger, silence_console_logging
 from config.settings import get_settings
 from database.connection import engine
 from database.models import Base
 
 settings = get_settings()
+silence_console_logging(["uvicorn", "uvicorn.error", "uvicorn.access"])
 logger = get_logger("api.main", app_name="api")
 
 app = FastAPI(

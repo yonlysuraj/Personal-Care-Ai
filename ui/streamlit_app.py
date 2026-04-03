@@ -8,6 +8,7 @@ Session ID is stored in session_state so each browser tab has one conversation.
 import os
 from pathlib import Path
 import sys
+from time import perf_counter
 import uuid
 
 import httpx
@@ -17,9 +18,10 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
 	sys.path.insert(0, str(ROOT_DIR))
 
-from config.logging_setup import get_logger
+from config.logging_setup import get_logger, silence_console_logging
 
 API_URL = os.getenv("FASTAPI_BASE_URL", "http://localhost:8000")
+silence_console_logging(["streamlit", "streamlit.runtime", "streamlit.web"])
 logger = get_logger("ui.streamlit_app", app_name="ui")
 CHAT_HTTP_TIMEOUT = httpx.Timeout(connect=5.0, read=90.0, write=30.0, pool=90.0)
 RELOAD_HTTP_TIMEOUT = httpx.Timeout(connect=5.0, read=60.0, write=20.0, pool=60.0)
@@ -72,6 +74,8 @@ if prompt := st.chat_input("Ask about products or beauty tips..."):
 				data = None
 				for attempt in range(2):
 					try:
+						call_started = perf_counter()
+						logger.info("Sending chat request session_id=%s attempt=%s", st.session_state.session_id, attempt + 1)
 						resp = httpx.post(
 							f"{API_URL}/api/chat",
 							json={
@@ -82,6 +86,14 @@ if prompt := st.chat_input("Ask about products or beauty tips..."):
 						)
 						resp.raise_for_status()
 						data = resp.json()
+						elapsed_ms = int((perf_counter() - call_started) * 1000)
+						logger.info(
+							"Chat response received session_id=%s attempt=%s status=%s elapsed_ms=%s",
+							st.session_state.session_id,
+							attempt + 1,
+							resp.status_code,
+							elapsed_ms,
+						)
 						break
 					except httpx.ReadTimeout:
 						if attempt == 0:
@@ -131,6 +143,8 @@ with st.sidebar:
 	if st.button("Scrape Products"):
 		with st.spinner("Scraping products. This can take 1-3 minutes..."):
 			try:
+				scrape_started = perf_counter()
+				logger.info("Scrape triggered url=%s pages=%s", scrape_url, page_count)
 				from scraper.myntra_scraper import category_to_slug, detect_category, scrape
 
 				category, _ = detect_category(scrape_url)
@@ -143,16 +157,24 @@ with st.sidebar:
 				)
 				reload_resp.raise_for_status()
 				reload_data = reload_resp.json()
+				elapsed_ms = int((perf_counter() - scrape_started) * 1000)
 				st.success(
 					f"Scraped {len(scraped)} products. Chatbot now uses {reload_data.get('active_csv')}"
 				)
-				logger.info("Scrape completed; loaded=%s active_csv=%s", reload_data.get("loaded"), reload_data.get("active_csv"))
+				logger.info(
+					"Scrape completed loaded=%s active_csv=%s elapsed_ms=%s",
+					reload_data.get("loaded"),
+					reload_data.get("active_csv"),
+					elapsed_ms,
+				)
 			except Exception as exc:
 				logger.exception("Sidebar scraping failed")
 				st.error(f"Scrape failed: {exc}")
 
 	if st.button("Use All CSV Files"):
 		try:
+			reload_started = perf_counter()
+			logger.info("Switching to all-CSV mode")
 			reload_resp = httpx.post(
 				f"{API_URL}/api/products/reload",
 				params={"use_all": True},
@@ -160,8 +182,9 @@ with st.sidebar:
 			)
 			reload_resp.raise_for_status()
 			reload_data = reload_resp.json()
+			elapsed_ms = int((perf_counter() - reload_started) * 1000)
 			st.success(f"Chatbot now uses all CSV files. Loaded {reload_data.get('loaded', 0)} rows.")
-			logger.info("Switched to all-CSV mode; loaded=%s", reload_data.get("loaded"))
+			logger.info("Switched to all-CSV mode loaded=%s elapsed_ms=%s", reload_data.get("loaded"), elapsed_ms)
 		except Exception as exc:
 			logger.exception("Switch to all-CSV mode failed")
 			st.error(f"Could not enable all-CSV mode: {exc}")
@@ -169,7 +192,9 @@ with st.sidebar:
 	st.divider()
 	st.markdown("### Product Catalog")
 	try:
+		stats_started = perf_counter()
 		stats = httpx.get(f"{API_URL}/api/products/stats", timeout=5.0).json()
+		logger.info("Stats fetched mode=%s active_csv=%s elapsed_ms=%s", stats.get("source_mode"), stats.get("active_csv"), int((perf_counter() - stats_started) * 1000))
 		st.metric("Total Products", stats.get("total", "-"))
 		st.metric("Brands", stats.get("brands", "-"))
 		st.metric("Avg Price", f"Rs {stats.get('avg_price', 0):.0f}")

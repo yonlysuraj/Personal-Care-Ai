@@ -2,10 +2,14 @@ from pathlib import Path
 
 import pandas as pd
 
+from config.logging_setup import get_logger
+
+log = get_logger("scraper.export", app_name="ui")
+
 
 def export_to_csv(products: list[dict], path: str = "data/products.csv") -> None:
 	if not products:
-		print("No products to export.")
+		log.warning("No products to export.")
 		return
 
 	Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -24,6 +28,6 @@ def export_to_csv(products: list[dict], path: str = "data/products.csv") -> None
 	df["price_numeric"] = pd.to_numeric(cleaned_prices, errors="coerce").fillna(0.0)
 	df.to_csv(path, index=False, encoding="utf-8-sig")
 
-	print(f"Exported {len(df)} products -> {path}")
-	print(f"Brands: {df['brand'].nunique()}")
-	print(f"Price range: Rs.{df['price_numeric'].min():.0f} - Rs.{df['price_numeric'].max():.0f}")
+	log.info("Exported %s products -> %s", len(df), path)
+	log.info("Brands: %s", df["brand"].nunique())
+	log.info("Price range: Rs.%s - Rs.%s", f"{df['price_numeric'].min():.0f}", f"{df['price_numeric'].max():.0f}")

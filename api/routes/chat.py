@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from time import perf_counter
 
 from api.schemas import ChatRequest, ChatResponse
 from chatbot.groq_client import get_chat_response
@@ -25,7 +26,12 @@ def get_or_create_conversation(session_id: str, db: Session) -> Conversation:
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, db: Session = Depends(get_db)):
-	logger.info("Chat request received for session_id=%s", request.session_id)
+	started = perf_counter()
+	logger.info(
+		"Chat request received session_id=%s message_len=%s",
+		request.session_id,
+		len(request.message or ""),
+	)
 	# 1. Check for human handoff first.
 	is_handoff, handoff_msg = check_handoff(request.message)
 
@@ -40,6 +46,7 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
 	)
 	db.add(user_msg)
 	db.commit()
+	logger.info("User message stored session_id=%s conversation_id=%s", request.session_id, convo.id)
 
 	if is_handoff:
 		reply = handoff_msg
@@ -52,6 +59,7 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
 			for m in convo.messages[-20:]
 			if m.role in ("user", "assistant")
 		]
+		logger.info("Prepared chat history session_id=%s history_messages=%s", request.session_id, len(history))
 
 		# 4. Call LLM.
 		try:
@@ -71,7 +79,15 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
 	)
 	db.add(ai_msg)
 	db.commit()
-	logger.info("Assistant response saved for session_id=%s", request.session_id)
+	duration_ms = int((perf_counter() - started) * 1000)
+	logger.info(
+		"Assistant response saved session_id=%s intent=%s handoff=%s reply_len=%s duration_ms=%s",
+		request.session_id,
+		intent,
+		is_handoff,
+		len(reply or ""),
+		duration_ms,
+	)
 
 	return ChatResponse(
 		reply=reply,

@@ -9,18 +9,29 @@ LOG_DIR = PROJECT_ROOT / "logs"
 _CONFIGURED: set[str] = set()
 
 
+def silence_console_logging(logger_names: list[str] | None = None) -> None:
+	"""Remove stream handlers from selected loggers to reduce terminal log noise."""
+	names = logger_names or [""]
+	for name in names:
+		logger = logging.getLogger(name)
+		stream_handlers = [h for h in logger.handlers if isinstance(h, logging.StreamHandler)]
+		for handler in stream_handlers:
+			logger.removeHandler(handler)
+
+
 def get_logger(name: str, app_name: str = "app") -> logging.Logger:
-	"""Return a logger that writes to logs/{app_name}-YYYY-MM-DD.log."""
+	"""Return a logger that writes to logs/{app_name}/{app_name}-YYYY-MM-DD.log."""
 	logger = logging.getLogger(name)
 	if name in _CONFIGURED:
 		return logger
 
-	LOG_DIR.mkdir(parents=True, exist_ok=True)
+	app_log_dir = LOG_DIR / app_name
+	app_log_dir.mkdir(parents=True, exist_ok=True)
 	date_stamp = datetime.now().strftime("%Y-%m-%d")
-	log_file = LOG_DIR / f"{app_name}-{date_stamp}.log"
+	log_file = app_log_dir / f"{app_name}-{date_stamp}.log"
 
 	formatter = logging.Formatter(
-		"%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+		"%(asctime)s | %(levelname)s | %(name)s | pid=%(process)d tid=%(thread)d | %(filename)s:%(lineno)d | %(message)s",
 		datefmt="%Y-%m-%d %H:%M:%S",
 	)
 

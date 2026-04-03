@@ -34,10 +34,10 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 
+from config.logging_setup import get_logger
 from scraper.export import export_to_csv
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(message)s")
-log = logging.getLogger(__name__)
+log = get_logger("scraper.myntra_scraper", app_name="ui")
 
 DEFAULT_URL = "https://www.myntra.com/personal-care?f=Categories%3ALipstick"
 DEFAULT_MAX_PAGES = 5
@@ -211,11 +211,6 @@ if __name__ == "__main__":
 	# CLI: python -m scraper.myntra_scraper [URL] [MAX_PAGES]
 	target_url = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_URL
 	pages = int(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_MAX_PAGES
-
-	print(f"\n{'='*60}")
-	print(f"  Myntra Scraper")
-	print(f"  URL:   {target_url}")
-	print(f"  Pages: {pages}")
-	print(f"{'='*60}\n")
+	log.info("Starting scraper from CLI with url=%s pages=%s", target_url, pages)
 
 	scrape(url=target_url, max_pages=pages)

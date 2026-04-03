@@ -28,7 +28,7 @@ Thumbs.db
 .vscode/
 
 # App logs
-logs/*.log
+logs/**
 
 # Implementation documents
 implementation_plan.md

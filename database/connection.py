@@ -6,9 +6,11 @@ SQLAlchemy engine setup.
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
+from config.logging_setup import get_logger
 from config.settings import get_settings
 
 settings = get_settings()
+logger = get_logger("database.connection", app_name="api")
 
 
 def get_engine():
@@ -62,7 +64,7 @@ def check_connection():
 			conn.execute(text("SELECT 1"))
 		return True
 	except Exception as e:
-		print(f"DB connection failed: {e}")
+		logger.exception("DB connection failed: %s", e)
 		return False
 
 
@@ -75,4 +77,4 @@ def create_tables():
 
 if __name__ == "__main__":
 	create_tables()
-	print("Tables created successfully.")
+	logger.info("Tables created successfully.")

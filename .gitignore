@@ -29,3 +29,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# App logs
+logs/*.log

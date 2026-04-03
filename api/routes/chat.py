@@ -4,10 +4,12 @@ from sqlalchemy.orm import Session
 from api.schemas import ChatRequest, ChatResponse
 from chatbot.groq_client import get_chat_response
 from chatbot.handoff import check_handoff
+from config.logging_setup import get_logger
 from database.connection import get_db
 from database.models import Conversation, Message
 
 router = APIRouter(prefix="/api", tags=["chat"])
+logger = get_logger("api.routes.chat", app_name="api")
 
 
 def get_or_create_conversation(session_id: str, db: Session) -> Conversation:
@@ -23,6 +25,7 @@ def get_or_create_conversation(session_id: str, db: Session) -> Conversation:
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, db: Session = Depends(get_db)):
+	logger.info("Chat request received for session_id=%s", request.session_id)
 	# 1. Check for human handoff first.
 	is_handoff, handoff_msg = check_handoff(request.message)
 
@@ -41,6 +44,7 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
 	if is_handoff:
 		reply = handoff_msg
 		intent = "escalation"
+		logger.info("Handoff triggered for session_id=%s", request.session_id)
 	else:
 		# 3. Fetch history for context.
 		history = [
@@ -54,6 +58,7 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
 			reply = get_chat_response(request.message, history)
 			intent = "general"
 		except Exception as exc:
+			logger.exception("LLM error for session_id=%s", request.session_id)
 			raise HTTPException(status_code=503, detail=f"LLM error: {exc}") from exc
 
 	# 5. Save assistant response.
@@ -66,6 +71,7 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
 	)
 	db.add(ai_msg)
 	db.commit()
+	logger.info("Assistant response saved for session_id=%s", request.session_id)
 
 	return ChatResponse(
 		reply=reply,

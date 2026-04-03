@@ -6,12 +6,21 @@ Session ID is stored in session_state so each browser tab has one conversation.
 """
 
 import os
+from pathlib import Path
+import sys
 import uuid
 
 import httpx
 import streamlit as st
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+	sys.path.insert(0, str(ROOT_DIR))
+
+from config.logging_setup import get_logger
+
 API_URL = os.getenv("FASTAPI_BASE_URL", "http://localhost:8000")
+logger = get_logger("ui.streamlit_app", app_name="ui")
 
 st.set_page_config(
 	page_title="Myra - Beauty Assistant",
@@ -24,6 +33,8 @@ if "session_id" not in st.session_state:
 	st.session_state.session_id = str(uuid.uuid4())
 if "messages" not in st.session_state:
 	st.session_state.messages = []
+
+logger.info("Streamlit session initialized with session_id=%s", st.session_state.session_id)
 
 
 st.markdown("## Myra - Personal Care Assistant")
@@ -48,6 +59,7 @@ if not st.session_state.messages:
 
 
 if prompt := st.chat_input("Ask about products or beauty tips..."):
+	logger.info("User message received in session_id=%s", st.session_state.session_id)
 	with st.chat_message("user"):
 		st.markdown(prompt)
 	st.session_state.messages.append({"role": "user", "content": prompt})
@@ -68,6 +80,7 @@ if prompt := st.chat_input("Ask about products or beauty tips..."):
 				reply = data["reply"]
 				is_handoff = data["is_handoff"]
 			except httpx.HTTPError as exc:
+				logger.exception("Backend call failed for session_id=%s", st.session_state.session_id)
 				reply = f"Sorry, I am having trouble connecting. Please try again. ({exc})"
 				is_handoff = False
 
@@ -82,6 +95,7 @@ if prompt := st.chat_input("Ask about products or beauty tips..."):
 			"is_handoff": is_handoff,
 		}
 	)
+	logger.info("Assistant message stored in session_id=%s", st.session_state.session_id)
 
 
 with st.sidebar:

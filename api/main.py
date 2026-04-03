@@ -10,11 +10,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 
 from api.routes import chat, products
+from config.logging_setup import get_logger
 from config.settings import get_settings
 from database.connection import engine
 from database.models import Base
 
 settings = get_settings()
+logger = get_logger("api.main", app_name="api")
 
 app = FastAPI(
 	title="Personal Care AI Chatbot API",
@@ -39,7 +41,7 @@ app.include_router(products.router)
 async def startup():
 	"""Create DB tables on startup if they do not exist."""
 	Base.metadata.create_all(bind=engine)
-	print("Database tables ready.")
+	logger.info("Database tables ready.")
 
 
 handler = Mangum(app, lifespan="off")

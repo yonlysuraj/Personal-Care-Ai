@@ -49,4 +49,4 @@ def get_settings() -> Settings:
 	Cached settings instance.
 	lru_cache means .env is only read once per process - efficient.
 	"""
-	return Settings()
+	return Settings()  # pyright: ignore[reportCallIssue]

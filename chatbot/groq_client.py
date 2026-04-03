@@ -29,7 +29,7 @@ def get_chat_response(
 	Builds the full message list and calls Groq.
 	history = previous turns (fetched from PostgreSQL in the API layer)
 	"""
-	relevant = search_products(user_message)
+	relevant = search_products(user_message, max_results=24)
 	product_context = format_products_for_prompt(relevant)
 	system_prompt = build_system_prompt(product_context)
 

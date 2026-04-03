@@ -69,18 +69,31 @@ if prompt := st.chat_input("Ask about products or beauty tips..."):
 	with st.chat_message("assistant"):
 		with st.spinner("Thinking..."):
 			try:
-				resp = httpx.post(
-					f"{API_URL}/api/chat",
-					json={
-						"message": prompt,
-						"session_id": st.session_state.session_id,
-					},
-					timeout=CHAT_HTTP_TIMEOUT,
-				)
-				resp.raise_for_status()
-				data = resp.json()
-				reply = data["reply"]
-				is_handoff = data["is_handoff"]
+				data = None
+				for attempt in range(2):
+					try:
+						resp = httpx.post(
+							f"{API_URL}/api/chat",
+							json={
+								"message": prompt,
+								"session_id": st.session_state.session_id,
+							},
+							timeout=CHAT_HTTP_TIMEOUT,
+						)
+						resp.raise_for_status()
+						data = resp.json()
+						break
+					except httpx.ReadTimeout:
+						if attempt == 0:
+							logger.warning(
+								"Chat timeout on first attempt; retrying for session_id=%s",
+								st.session_state.session_id,
+							)
+							continue
+						raise
+
+				reply = data["reply"] if data else "Sorry, no response received."
+				is_handoff = data["is_handoff"] if data else False
 			except httpx.ReadTimeout as exc:
 				logger.exception("Backend chat call timed out for session_id=%s", st.session_state.session_id)
 				reply = (

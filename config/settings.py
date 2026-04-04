@@ -11,6 +11,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
 	# LLM
 	groq_api_key: str
+	groq_api_key_fallback: str | None = None
 
 	# Databases
 	local_database_url: str = ""

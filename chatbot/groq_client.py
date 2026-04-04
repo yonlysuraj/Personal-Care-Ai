@@ -4,13 +4,14 @@ Groq API wrapper.
 - Returns the assistant's response text
 """
 
-from groq import Groq
+from groq import Groq, RateLimitError
 
 from chatbot.product_kb import format_products_for_prompt, search_products
 from chatbot.prompt_templates import build_system_prompt
 from config.settings import get_settings
 
 _client: Groq | None = None
+_fallback_client: Groq | None = None
 
 
 def get_groq_client() -> Groq:
@@ -18,6 +19,13 @@ def get_groq_client() -> Groq:
 	if _client is None:
 		_client = Groq(api_key=get_settings().groq_api_key)
 	return _client
+
+def get_fallback_groq_client() -> Groq | None:
+	global _fallback_client
+	settings = get_settings()
+	if _fallback_client is None and settings.groq_api_key_fallback:
+		_fallback_client = Groq(api_key=settings.groq_api_key_fallback)
+	return _fallback_client
 
 
 def get_chat_response(
@@ -37,12 +45,22 @@ def get_chat_response(
 	messages.extend(history[-10:])
 	messages.append({"role": "user", "content": user_message})
 
-	response = get_groq_client().chat.completions.create(
+	kwargs = dict(
 		model="llama-3.3-70b-versatile",
 		messages=messages,
 		max_tokens=max_tokens,
 		temperature=0.7,
 	)
+
+	try:
+		response = get_groq_client().chat.completions.create(**kwargs)
+	except Exception as e:
+		fallback_client = get_fallback_groq_client()
+		if fallback_client:
+			print(f"Primary groq client failed ({e}), using fallback key...")
+			response = fallback_client.chat.completions.create(**kwargs)
+		else:
+			raise e
 
 	content = response.choices[0].message.content
 	return content if content is not None else ""

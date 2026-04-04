@@ -7,7 +7,7 @@ from config.logging_setup import get_logger
 log = get_logger("scraper.export", app_name="ui")
 
 
-def export_to_csv(products: list[dict], path: str = "data/products.csv") -> None:
+def export_to_csv(products: list[dict], path: str = "data/products_scraped.csv") -> None:
 	if not products:
 		log.warning("No products to export.")
 		return

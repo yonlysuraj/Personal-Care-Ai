@@ -10,8 +10,8 @@ import re
 import pandas as pd
 
 # Tracks which CSV the chatbot is currently using
-_active_csv: str = "data/products.csv"
 ALL_CSVS_TOKEN = "__ALL__"
+_active_csv: str = ALL_CSVS_TOKEN
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 STOPWORDS = {
 	"a",
@@ -42,9 +42,12 @@ CATEGORY_ALIASES = {
 	"lipstick": ["lipstick", "lipsticks"],
 	"perfume": ["perfume", "perfumes", "fragrance", "fragrances"],
 	"nail polish": ["nail polish", "nail polishes", "nailpolish", "nail", "polish"],
+	"beard serum": ["beard serum", "beard serums", "beard oil", "beard oils", "beard growth"],
+	"shower gel": ["shower gel", "shower gels", "body wash", "body washes", "shower"],
 	"massage oils": ["massage oil", "massage oils", "body oil", "body oils"],
 	"body lotion": ["body lotion", "body lotions", "lotion", "lotions", "body cream", "body creams"],
 }
+GENERIC_CATEGORY_WORDS = {"and", "or", "care", "personal", "set", "with", "for", "the"}
 
 
 def _normalize_keywords(query: str) -> list[str]:
@@ -68,13 +71,36 @@ def _normalize_keywords(query: str) -> list[str]:
 	return normalized
 
 
-def _detect_requested_categories(query: str) -> list[str]:
+def _detect_requested_categories(query: str, available_categories: list[str] | None = None) -> list[str]:
 	query_lower = query.lower()
 	requested: list[str] = []
 	for canonical, aliases in CATEGORY_ALIASES.items():
 		if any(alias in query_lower for alias in aliases):
 			requested.append(canonical)
-	return requested
+
+	# Dynamic category detection: auto-detect new categories present in scraped CSVs.
+	if available_categories:
+		query_tokens = set(_normalize_keywords(query))
+		for category_name in available_categories:
+			cat_tokens = {
+				t
+				for t in re.findall(r"[a-zA-Z0-9]+", category_name.lower())
+				if len(t) >= 3 and t not in STOPWORDS and t not in GENERIC_CATEGORY_WORDS
+			}
+			if not cat_tokens:
+				continue
+			# If at least one meaningful token overlaps, treat this category as requested.
+			if query_tokens.intersection(cat_tokens):
+				requested.append(category_name.lower())
+
+	# Preserve order while de-duplicating.
+	seen: set[str] = set()
+	ordered: list[str] = []
+	for category in requested:
+		if category not in seen:
+			seen.add(category)
+			ordered.append(category)
+	return ordered
 
 
 def _category_match_mask(category_series: pd.Series, category_name: str) -> pd.Series:
@@ -84,15 +110,29 @@ def _category_match_mask(category_series: pd.Series, category_name: str) -> pd.S
 		return category_series.str.contains("perfume|fragrance", regex=True, na=False)
 	if category_name == "nail polish":
 		return category_series.str.contains(r"nail\s*polish", regex=True, na=False)
+	if category_name == "beard serum":
+		return category_series.str.contains("beard|serum|oil", regex=True, na=False)
+	if category_name == "shower gel":
+		return category_series.str.contains("shower gel|body wash|shower", regex=True, na=False)
 	if category_name == "massage oils":
 		return category_series.str.contains("massage|body oil", regex=True, na=False)
 	if category_name == "body lotion":
 		return category_series.str.contains("body cream|body lotion|lotion", regex=True, na=False)
+
+	# Fallback for new categories scraped in the future (no code change needed).
+	tokens = [
+		re.escape(t)
+		for t in re.findall(r"[a-zA-Z0-9]+", category_name.lower())
+		if len(t) >= 3 and t not in STOPWORDS and t not in GENERIC_CATEGORY_WORDS
+	]
+	if tokens:
+		pattern = "|".join(tokens)
+		return category_series.str.contains(pattern, regex=True, na=False)
 	return pd.Series([False] * len(category_series), index=category_series.index)
 
 
 @lru_cache(maxsize=1)
-def load_products(csv_path: str = "data/products.csv") -> pd.DataFrame:
+def load_products(csv_path: str = "") -> pd.DataFrame:
 	"""
 	lru_cache means the CSV is read ONCE per process.
 	On each cold start, it is re-read once per process - acceptable for a small CSV.
@@ -179,7 +219,13 @@ def search_products(query: str, max_results: int = 6) -> list[dict]:
 	elif "rating" in results.columns:
 		results = results.sort_values("rating", ascending=False)
 
-	requested_categories = _detect_requested_categories(query)
+	available_categories = []
+	if "category" in results.columns:
+		available_categories = (
+			results["category"].dropna().astype(str).str.lower().drop_duplicates().tolist()
+		)
+
+	requested_categories = _detect_requested_categories(query, available_categories=available_categories)
 	if requested_categories and "category" in results.columns and len(results) > 0:
 		cat_series = results["category"].astype(str).str.lower()
 		selected_idx: list[int] = []
@@ -210,8 +256,9 @@ def format_products_for_prompt(products: list[dict]) -> str:
 
 	lines = []
 	for product in products:
+		category = product.get("category", "N/A")
 		lines.append(
-			f"- {product.get('brand', '?')} - {product.get('product_name', '?')} | "
+			f"- Category: {category} | {product.get('brand', '?')} - {product.get('product_name', '?')} | "
 			f"Price: {product.get('discounted_price', 'N/A')} | "
 			f"Rating: {product.get('rating', 'N/A')} stars | "
 			f"URL: {product.get('product_url', 'N/A')}"

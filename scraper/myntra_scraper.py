@@ -4,7 +4,7 @@ Myntra Dynamic Scraper
 - Accepts ANY Myntra product listing URL + page count
 - Uses Selenium with headless Chrome + webdriver-manager
 - Extracts: brand, name, prices, discount, rating, reviews, URL, image, breadcrumbs
-- Exports to data/products.csv via scraper/export.py
+- Exports to category CSVs (for example data/products_lipstick.csv) via scraper/export.py
 
 Usage:
   # Default (lipstick, 5 pages):
@@ -22,6 +22,7 @@ import random
 import re
 import sys
 import time
+from time import perf_counter
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -161,25 +162,31 @@ def scrape(
 	"""
 	max_pages = min(max(1, max_pages), 10)  # clamp 1-10
 	category, breadcrumbs = detect_category(url)
+	run_started = perf_counter()
 
-	log.info(f"Category: {category}")
-	log.info(f"Breadcrumbs: {breadcrumbs}")
-	log.info(f"Pages to scrape: {max_pages}")
-	log.info(f"URL: {url}")
+	log.info("[STEP 1/6] Scrape request received")
+	log.info("  Category: %s", category)
+	log.info("  Breadcrumbs: %s", breadcrumbs)
+	log.info("  Pages to scrape: %s", max_pages)
+	log.info("  URL: %s", url)
 
 	all_products: list[dict] = []
+	log.info("[STEP 2/6] Initializing browser driver")
 	driver = create_driver()
+	log.info("[STEP 2/6] Browser driver ready")
 	try:
+		log.info("[STEP 3/6] Starting page-by-page scraping")
 		for page in range(1, max_pages + 1):
+			page_started = perf_counter()
 			page_url = url if page == 1 else f"{url}&p={page}"
-			log.info(f"Scraping page {page}: {page_url}")
+			log.info("  [PAGE %s/%s] Loading %s", page, max_pages, page_url)
 			driver.get(page_url)
 			try:
 				WebDriverWait(driver, 20).until(
 					EC.presence_of_all_elements_located((By.CSS_SELECTOR, "li.product-base"))
 				)
 			except TimeoutException:
-				log.warning(f"Timeout on page {page}, skipping.")
+				log.warning("  [PAGE %s/%s] Timeout waiting for product cards, skipping", page, max_pages)
 				continue
 
 			for pct in [0.3, 0.6, 1.0]:
@@ -187,23 +194,38 @@ def scrape(
 				time.sleep(0.6)
 
 			cards = driver.find_elements(By.CSS_SELECTOR, "li.product-base")
-			log.info(f"  Found {len(cards)} cards")
+			log.info("  [PAGE %s/%s] Found %s cards", page, max_pages, len(cards))
+			page_added = 0
 			for i, card in enumerate(cards, 1):
 				product = parse_card(card, page, i, category, breadcrumbs)
 				if product:
 					all_products.append(product)
+					page_added += 1
+
+			page_elapsed_ms = int((perf_counter() - page_started) * 1000)
+			log.info(
+				"  [PAGE %s/%s] Parsed=%s cumulative_total=%s elapsed_ms=%s",
+				page,
+				max_pages,
+				page_added,
+				len(all_products),
+				page_elapsed_ms,
+			)
 
 			time.sleep(random.uniform(2.5, 4.0))
 	finally:
+		log.info("[STEP 4/6] Closing browser driver")
 		driver.quit()
 
-	log.info(f"Total scraped: {len(all_products)} products")
+	log.info("[STEP 5/6] Scraping complete. Total products=%s", len(all_products))
 	if len(all_products) < 20:
 		log.warning("Very few products scraped. Site may have blocked automation or changed markup.")
 
 	csv_path = output_path or f"data/products_{category_to_slug(category)}.csv"
-	log.info(f"Export path: {csv_path}")
+	log.info("[STEP 6/6] Exporting to CSV path=%s", csv_path)
 	export_to_csv(all_products, path=csv_path)
+	run_elapsed_ms = int((perf_counter() - run_started) * 1000)
+	log.info("[DONE] Scrape run finished in %s ms", run_elapsed_ms)
 	return all_products
 
 

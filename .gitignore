@@ -33,5 +33,6 @@ logs/**
 # Implementation documents
 implementation_plan.md
 IMPLEMENTATION_ROADMAP.md
+video_demo_script.md
 
 data/

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi import APIRouter
 
 from chatbot.product_kb import ALL_CSVS_TOKEN, get_active_csv, get_catalog_stats, load_products, reload_products
@@ -5,6 +7,13 @@ from config.logging_setup import get_logger
 
 router = APIRouter(prefix="/api", tags=["products"])
 logger = get_logger("api.routes.products", app_name="api")
+DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+
+
+def _list_available_datasets() -> list[str]:
+	if not DATA_DIR.exists():
+		return []
+	return sorted(path.name for path in DATA_DIR.glob("*.csv"))
 
 
 @router.get("/products")
@@ -33,8 +42,24 @@ async def get_stats():
 	return {"active_csv": get_active_csv(), "source_mode": source_mode, **stats}
 
 
+@router.get("/products/datasets")
+async def get_datasets():
+	"""Return selectable dataset files and current source mode."""
+	active = get_active_csv()
+	files = _list_available_datasets()
+	active_dataset = Path(active).name if active != ALL_CSVS_TOKEN else ALL_CSVS_TOKEN
+	if active_dataset not in (ALL_CSVS_TOKEN, *files):
+		files.insert(0, active_dataset)
+	return {
+		"datasets": files,
+		"active_dataset": active_dataset,
+		"active_csv": active,
+		"source_mode": "all" if active == ALL_CSVS_TOKEN else "single",
+	}
+
+
 @router.post("/products/reload")
-async def reload_products_data(csv_path: str = "data/products.csv", use_all: bool = False):
+async def reload_products_data(csv_path: str | None = None, use_all: bool = True):
 	target = ALL_CSVS_TOKEN if use_all else csv_path
 	logger.info("Reload request received use_all=%s target=%s", use_all, target)
 	loaded = reload_products(target)

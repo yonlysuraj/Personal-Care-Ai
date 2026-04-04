@@ -133,6 +133,80 @@ if prompt := st.chat_input("Ask about products or beauty tips..."):
 
 
 with st.sidebar:
+	st.markdown("### Dataset Source")
+	try:
+		dataset_info = httpx.get(f"{API_URL}/api/products/datasets", timeout=5.0).json()
+		datasets = dataset_info.get("datasets", [])
+		active_dataset = dataset_info.get("active_dataset", "__ALL__")
+		options = ["__ALL__"] + datasets
+		if active_dataset not in options:
+			options.append(active_dataset)
+
+		# Keep UI selection aligned with backend source unless user explicitly applies a new choice.
+		if "last_applied_dataset" not in st.session_state:
+			st.session_state.last_applied_dataset = active_dataset
+		if st.session_state.last_applied_dataset != active_dataset:
+			st.session_state.selected_dataset = active_dataset
+			st.session_state.last_applied_dataset = active_dataset
+		if "selected_dataset" not in st.session_state or st.session_state.selected_dataset not in options:
+			st.session_state.selected_dataset = active_dataset
+
+		selected_dataset = st.selectbox(
+			"Choose dataset",
+			options=options,
+			index=options.index(st.session_state.selected_dataset),
+			format_func=lambda x: "All CSV Files (merged)" if x == "__ALL__" else x,
+		)
+		st.session_state.selected_dataset = selected_dataset
+		st.caption(f"Active now: {active_dataset}")
+
+		if st.button("Apply Dataset"):
+			try:
+				progress_text = st.empty()
+				progress_text.info("Switching dataset source...")
+				progress = st.progress(0)
+				progress.progress(20)
+				reload_started = perf_counter()
+				if selected_dataset == "__ALL__":
+					progress.progress(45)
+					reload_resp = httpx.post(
+						f"{API_URL}/api/products/reload",
+						params={"use_all": True},
+						timeout=RELOAD_HTTP_TIMEOUT,
+					)
+				else:
+					progress.progress(45)
+					reload_resp = httpx.post(
+						f"{API_URL}/api/products/reload",
+						params={"csv_path": f"data/{selected_dataset}"},
+						timeout=RELOAD_HTTP_TIMEOUT,
+					)
+				progress.progress(80)
+				reload_resp.raise_for_status()
+				reload_data = reload_resp.json()
+				elapsed_ms = int((perf_counter() - reload_started) * 1000)
+				new_active = Path(reload_data.get("active_csv", "")).name or selected_dataset
+				st.session_state.selected_dataset = new_active
+				st.session_state.last_applied_dataset = new_active
+				progress.progress(100)
+				progress_text.empty()
+				st.success(
+					f"Source updated. Mode: {reload_data.get('source_mode')} | Active: {reload_data.get('active_csv')}"
+				)
+				logger.info(
+					"Dataset switched source_mode=%s active_csv=%s elapsed_ms=%s",
+					reload_data.get("source_mode"),
+					reload_data.get("active_csv"),
+					elapsed_ms,
+				)
+			except Exception as exc:
+				progress_text.empty()
+				logger.exception("Dataset switch failed")
+				st.error(f"Could not switch dataset: {exc}")
+	except Exception:
+		st.info("Dataset list unavailable")
+
+	st.divider()
 	st.markdown("### Scrape Myntra")
 	scrape_url = st.text_input(
 		"Listing URL",
@@ -141,53 +215,54 @@ with st.sidebar:
 	page_count = st.slider("Pages", min_value=1, max_value=10, value=3)
 
 	if st.button("Scrape Products"):
-		with st.spinner("Scraping products. This can take 1-3 minutes..."):
-			try:
-				scrape_started = perf_counter()
-				logger.info("Scrape triggered url=%s pages=%s", scrape_url, page_count)
-				from scraper.myntra_scraper import category_to_slug, detect_category, scrape
-
-				category, _ = detect_category(scrape_url)
-				csv_path = ROOT_DIR / "data" / f"products_{category_to_slug(category)}.csv"
-				scraped = scrape(url=scrape_url, max_pages=page_count, output_path=str(csv_path))
-				reload_resp = httpx.post(
-					f"{API_URL}/api/products/reload",
-					params={"csv_path": str(csv_path)},
-					timeout=RELOAD_HTTP_TIMEOUT,
-				)
-				reload_resp.raise_for_status()
-				reload_data = reload_resp.json()
-				elapsed_ms = int((perf_counter() - scrape_started) * 1000)
-				st.success(
-					f"Scraped {len(scraped)} products. Chatbot now uses {reload_data.get('active_csv')}"
-				)
-				logger.info(
-					"Scrape completed loaded=%s active_csv=%s elapsed_ms=%s",
-					reload_data.get("loaded"),
-					reload_data.get("active_csv"),
-					elapsed_ms,
-				)
-			except Exception as exc:
-				logger.exception("Sidebar scraping failed")
-				st.error(f"Scrape failed: {exc}")
-
-	if st.button("Use All CSV Files"):
+		progress_text = st.empty()
+		progress = st.progress(0)
 		try:
-			reload_started = perf_counter()
-			logger.info("Switching to all-CSV mode")
+			scrape_started = perf_counter()
+			logger.info("Scrape triggered url=%s pages=%s", scrape_url, page_count)
+			from scraper.myntra_scraper import category_to_slug, detect_category, scrape
+
+			progress_text.info("Step 1/4: Detecting category from URL...")
+			progress.progress(10)
+			category, _ = detect_category(scrape_url)
+			csv_path = ROOT_DIR / "data" / f"products_{category_to_slug(category)}.csv"
+
+			progress_text.info("Step 2/4: Scraping Myntra pages...")
+			progress.progress(25)
+			scraped = scrape(url=scrape_url, max_pages=page_count, output_path=str(csv_path))
+
+			progress_text.info("Step 3/4: Reloading chatbot dataset...")
+			progress.progress(80)
 			reload_resp = httpx.post(
 				f"{API_URL}/api/products/reload",
-				params={"use_all": True},
+				params={"csv_path": str(csv_path)},
 				timeout=RELOAD_HTTP_TIMEOUT,
 			)
 			reload_resp.raise_for_status()
 			reload_data = reload_resp.json()
-			elapsed_ms = int((perf_counter() - reload_started) * 1000)
-			st.success(f"Chatbot now uses all CSV files. Loaded {reload_data.get('loaded', 0)} rows.")
-			logger.info("Switched to all-CSV mode loaded=%s elapsed_ms=%s", reload_data.get("loaded"), elapsed_ms)
+			elapsed_ms = int((perf_counter() - scrape_started) * 1000)
+			new_active = Path(reload_data.get("active_csv", "")).name
+			if new_active:
+				st.session_state.selected_dataset = new_active
+				st.session_state.last_applied_dataset = new_active
+
+			progress_text.info("Step 4/4: Done")
+			progress.progress(100)
+			st.success(
+				f"Scraped {len(scraped)} products. Chatbot now uses {reload_data.get('active_csv')}"
+			)
+			logger.info(
+				"Scrape completed loaded=%s active_csv=%s elapsed_ms=%s",
+				reload_data.get("loaded"),
+				reload_data.get("active_csv"),
+				elapsed_ms,
+			)
 		except Exception as exc:
-			logger.exception("Switch to all-CSV mode failed")
-			st.error(f"Could not enable all-CSV mode: {exc}")
+			logger.exception("Sidebar scraping failed")
+			st.error(f"Scrape failed: {exc}")
+		finally:
+			progress_text.empty()
+			progress.empty()
 
 	st.divider()
 	st.markdown("### Product Catalog")
@@ -200,7 +275,7 @@ with st.sidebar:
 		st.metric("Avg Price", f"Rs {stats.get('avg_price', 0):.0f}")
 		st.metric("Avg Rating", f"{stats.get('avg_rating', 0):.1f}")
 		st.caption(f"Mode: {stats.get('source_mode', 'single')}")
-		st.caption(f"Using: {stats.get('active_csv', 'data/products.csv')}")
+		st.caption(f"Using: {stats.get('active_csv', '__ALL__')}")
 	except Exception:
 		st.info("Stats unavailable")
 

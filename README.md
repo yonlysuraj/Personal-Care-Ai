@@ -1,29 +1,23 @@
 # Personal Care AI Assistant
 
-This project is an AI-powered personal-care assistant that combines:
+This project is an advanced AI-powered personal-care assistant that combines an interactive frontend, a scalable backend, a live data scraper, and a dynamic Retrieval-Augmented Generation (RAG) pipeline to deliver grounded, hallucination-free product recommendations and responsive customer service.
 
-- FastAPI backend
-- Streamlit chat UI
-- Groq LLM (Llama 3.3 70B)
-- PostgreSQL conversation storage
-- Myntra scraper (local-only) for building a product knowledge base from CSV files
+## Core Architecture
 
-The app supports both:
+- **Backend:** FastAPI
+- **Frontend:** Streamlit
+- **LLM Engine:** Groq API (Llama 3.1 / 3.3) with rate-limit fallback handling
+- **Database:** PostgreSQL (SQLAlchemy) for persistent conversation storage
+- **Data Ingestion:** Selenium web scraper (local-only) with dynamic category discovery
 
-- Single CSV mode (use one dataset)
-- All CSV mode (merge all datasets in the `data/` folder)
+## Key Features
 
-## Features
-
-- Chat assistant for personal-care product discovery and recommendations
-- Human handoff detection for support/returns/offers/complaints
-- Sidebar scraping from any Myntra listing URL
-- Auto-generated category CSV files (for example `products_perfume.csv`)
-- Runtime source switch:
-	- Use latest scraped file
-	- Use all CSV files together
-- Product catalog stats in UI
-- Dated application logs in `logs/`
+- **Grounded Product Recommendations:** Chat assistant powered by a native Pandas-based RAG pipeline that filters and injects context directly into the LLM prompt.
+- **Dynamic Category Handling:** The AI automatically detects product domains (e.g., "lipstick", "beard serum") from user queries using token intersection against the live dataset, enabling complex multi-category queries without hardcoded logic.
+- **Human Handoff Safety:** Intent-based detection intercepts sensitive requests (returns, complaints, refunds) *before* LLM generation to prevent policy hallucination and ensure enterprise-level safety.
+- **Live Data Integration:** An integrated sidebar scraper runs real-time Selenium extraction on e-commerce listings, complete with stepwise UI progress bars.
+- **Seamless Dataset Control:** Admins can instantly switch the active AI Knowledge Base via a UI dropdown. The system defaults to **Merged Mode**, synthesizing all locally scraped category CSVs for a massive, comprehensive catalog.
+- **Resilient API:** Configured with a `GROQ_API_KEY_FALLBACK` to automatically switch API keys if rate limits are exceeded.
 
 ## Tech Stack
 
@@ -31,8 +25,8 @@ The app supports both:
 - FastAPI
 - Streamlit
 - SQLAlchemy + PostgreSQL
-- Groq SDK
-- Selenium + webdriver-manager + BeautifulSoup + pandas
+- Groq SDK (Llama models)
+- Selenium + webdriver-manager + BeautifulSoup + Pandas
 
 ## Project Structure
 
@@ -62,7 +56,6 @@ project-root/
 	ui/
 		streamlit_app.py
 	data/
-		products.csv
 		products_*.csv
 	logs/
 		api-YYYY-MM-DD.log
@@ -87,6 +80,8 @@ Create `.env` in project root:
 
 ```env
 GROQ_API_KEY=your_groq_key
+GROQ_API_KEY_FALLBACK=your_secondary_groq_key
+
 LOCAL_DATABASE_URL=postgresql://postgres:password@localhost:5432/personal_care_db
 PRODUCTION_DATABASE_URL=postgresql://user:pass@host/db?sslmode=require
 ENVIRONMENT=development
@@ -117,27 +112,24 @@ Open:
 
 ## How Data Source Works
 
+The system dynamically lists all `.csv` files stored in `data/`, making them selectable in the Streamlit Sidebar.
+
 ### Single CSV mode
+- When you use the scraper, it writes a new category file in `data/` (for example `products_nail_polish.csv`).
+- A backend automatically registers this file. Selecting it sets the RAG context strictly to this single category, perfect for constrained testing.
 
-- Scraping from sidebar writes a category file in `data/` (for example `products_nail_polish.csv`)
-- Backend reloads that file and chat answers from it
-
-### All CSV mode
-
-- Click `Use All CSV Files` in sidebar
-- Backend merges all `products_*.csv` in `data/`
-- Chat answers from combined catalog
-
-Note: if you scrape a new file while in all mode, source switches to that new single file. Click `Use All CSV Files` again to re-enable merged mode.
+### All CSV mode (Merged Mode - Default)
+- By selecting `All CSV Files (merged)` from the dropdown, the backend leverages pandas to concatenate every `products_*.csv` file in the folder.
+- This creates a massive, multi-domain knowledge base allowing the chatbot to answer complex, mixed-domain queries.
 
 ## Sidebar Scraping
 
-In Streamlit sidebar:
+In the Streamlit sidebar:
 
-1. Paste Myntra listing URL
-2. Set page count
-3. Click `Scrape Products`
-4. Optionally click `Use All CSV Files`
+1. Paste a Myntra listing URL.
+2. Set the desired page count limit.
+3. Click `Scrape Products`. You will see a real-time progress bar tracking stepwise validation.
+4. The system automatically structures and saves the data into `data/products_[category].csv`, immediately refreshing the UI dropdown available datasets.
 
 Examples:
 
@@ -152,16 +144,14 @@ Examples:
 	- Body: `{ "message": "...", "session_id": "..." }`
 	- Returns assistant reply and handoff status
 
+- `GET /api/products/datasets`
+	- Gets a JSON list of all available `.csv` mapping targets, returning the user-friendly filename alongside full absolute paths.
 - `GET /api/products`
-	- Optional query: `limit`, `brand`
-
+	- Retrieves the current state of products based on the session's active dataset.
 - `GET /api/products/stats`
-	- Returns catalog stats + active source mode
-
+	- Returns catalog metadata, total row count, available categories, and the currently active mode.
 - `POST /api/products/reload`
-	- Query params:
-		- `csv_path` for single-file mode
-		- `use_all=true` for merged mode
+	- Syncs the Streamlit UI state with the backend dataset configuration. Pass `csv_path` to bind context to a single file, or `use_all=true` for Merged Mode.
 
 - `GET /api/health`
 	- Returns app status + DB connectivity
@@ -177,15 +167,15 @@ These logs include chat requests, scrape/reload events, and error traces.
 
 ## Troubleshooting
 
-- Timeout in chat (`timed out`):
-	- Retry once
-	- Ask shorter query
-	- Ensure backend is running
+- Timeout in chat (`timed out`) or `503 Service Unavailable`:
+	- If rate limited on Groq, the backend will auto-failover to `GROQ_API_KEY_FALLBACK`.
+	- If both keys expire, ensure your `.env` contains valid, active API keys with available balance.
+	- Ensure the backend (`uvicorn`) is running and not stuck waiting on the database.
 
-- Category not appearing in mixed query:
-	- Click `Use All CSV Files`
-	- Confirm `Mode: all` in sidebar
-	- Ensure corresponding `products_*.csv` exists in `data/`
+- Category not answering multi-domain queries (e.g. asking for beard serum and lipstick):
+	- Ensure the Streamlit sidebar dropdown is set to `All CSV Files (merged)`.
+	- Ensure both `products_beard_serum.csv` and `products_lipstick.csv` exist in the `data/` folder.
+	- The system dynamic token matching logic automatically cross-references these!
 
 - Streamlit import error (`No module named config`):
 	- Run from project root

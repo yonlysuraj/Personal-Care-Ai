@@ -2,6 +2,8 @@
 
 This project is an advanced AI-powered personal-care assistant that combines an interactive frontend, a scalable backend, a live data scraper, and a dynamic Retrieval-Augmented Generation (RAG) pipeline to deliver grounded, hallucination-free product recommendations and responsive customer service.
 
+![Workflow](WorkFlow.png)
+
 ## Core Architecture
 
 - **Backend:** FastAPI
